@@ -2,15 +2,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 import requests
+import re
 import feedparser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 设置日志配置
-logging.basicConfig(level=logging.INFO, format='😋%(levelname)s: %(message)s')
-
 # 标准化的请求头
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 Safari/534.50'
 }
 
 timeout = (10, 15) # 连接超时和读取超时，防止requests接受时间过长
@@ -55,6 +53,7 @@ def format_published_time(time_str):
     return shanghai_time.strftime('%Y-%m-%d %H:%M')
 
 
+
 def check_feed(blog_url, session):
     """
     检查博客的 RSS 或 Atom 订阅链接。
@@ -94,7 +93,8 @@ def check_feed(blog_url, session):
     logging.warning(f"无法找到 {blog_url} 的订阅链接")
     return ['none', blog_url]
 
-def parse_feed(url, session, count=5):
+
+def parse_feed(url, session, count=5, blog_url=''):
     """
     解析 Atom 或 RSS2 feed 并返回包含网站名称、作者、原链接和每篇文章详细内容的字典。
 
@@ -121,7 +121,7 @@ def parse_feed(url, session, count=5):
             'articles': []
         }
         
-        for i, entry in enumerate(feed.entries):
+        for _ , entry in enumerate(feed.entries):
             
             if 'published' in entry:
                 published = format_published_time(entry.published)
@@ -131,11 +131,15 @@ def parse_feed(url, session, count=5):
                 logging.warning(f"文章 {entry.title} 未包含发布时间，已使用更新时间 {published}")
             else:
                 published = ''
-                logging.warning(f"文章 {entry.title} 未包含任何时间信息")
+                logging.warning(f"文章 {entry.title} 未包含任何时间信息, 请检查原文, 设置为默认时间")
+            
+            # 处理链接中可能存在的错误，比如ip或localhost
+            article_link = replace_non_domain(entry.link, blog_url) if 'link' in entry else ''
+            
             article = {
                 'title': entry.title if 'title' in entry else '',
                 'author': result['author'],
-                'link': entry.link if 'link' in entry else '',
+                'link': article_link,
                 'published': published,
                 'summary': entry.summary if 'summary' in entry else '',
                 'content': entry.content[0].value if 'content' in entry and entry.content else entry.description if 'description' in entry else ''
@@ -149,13 +153,30 @@ def parse_feed(url, session, count=5):
         
         return result
     except Exception as e:
-        logging.error(f"无法解析FEED地址：{url} ，请自行排查原因！", exc_info=True)
+        logging.error(f"无法解析FEED地址：{url} ，请自行排查原因！")
         return {
             'website_name': '',
             'author': '',
             'link': '',
             'articles': []
         }
+
+def replace_non_domain(link: str, blog_url: str) -> str:
+    """
+    暂未实现
+    检测并替换字符串中的非正常域名部分（如 IP 地址或 localhost），替换为 blog_url。
+    替换后强制使用 https，且考虑 blog_url 尾部是否有斜杠。
+
+    :param link: 原始地址字符串
+    :param blog_url: 替换为的博客地址
+    :return: 替换后的地址字符串
+    """
+    
+    # 提取link中的路径部分，无需协议和域名
+    # path = re.sub(r'^https?://[^/]+', '', link)
+    # print(path)
+    
+    return link
 
 def process_friend(friend, session, count, specific_RSS=[]):
     """
@@ -179,13 +200,13 @@ def process_friend(friend, session, count, specific_RSS=[]):
     if rss_feed:
         feed_url = rss_feed
         feed_type = 'specific'
-        logging.info(f"“{name}”的博客“{blog_url}”为特定RSS源“{feed_url}”")
+        logging.info(f"“{name}”的博客“ {blog_url} ”为特定RSS源“ {feed_url} ”")
     else:
         feed_type, feed_url = check_feed(blog_url, session)
-        logging.info(f"“{name}”的博客“{blog_url}”的feed类型为“{feed_type}”")
+        logging.info(f"“{name}”的博客“ {blog_url} ”的feed类型为“{feed_type}”, feed地址为“ {feed_url} ”")
 
     if feed_type != 'none':
-        feed_info = parse_feed(feed_url, session, count)
+        feed_info = parse_feed(feed_url, session, count, blog_url)
         articles = [
             {
                 'title': article['title'],
